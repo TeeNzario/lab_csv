@@ -26,3 +26,23 @@ model ValorantPlayer {
 
   @@map("valorant_players")
 }
+
+model ValorantPlayerImport {
+  id             Int     @id @default(autoincrement())
+
+  playerName     String?
+  riotId         String?
+  region         String?
+  rank           String?
+  mainAgent      String?
+  headshotRate   Float?
+  kdRatio        Float?
+  matchesPlayed  Int?
+
+  isValid        Boolean @default(true)
+  errorMessage   String?
+
+  createdAt      DateTime @default(now())
+
+  @@map("valorant_player_imports")
+}

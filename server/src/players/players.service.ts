@@ -14,50 +14,96 @@ export class PlayersService {
       throw new BadRequestException('CSV file is required');
     }
 
-    // type of players
-    const players: {
-      playerName: string;
-      riotId: string;
-      region: string;
-      rank: string;
-      mainAgent: string;
-      headshotRate: number;
-      kdRatio: number;
-      matchesPlayed: number;
-    }[] = [];
+    const rows: any[] = [];
 
-    return new Promise((resolve, reject) => {
+    await new Promise((resolve, reject) => {
       Readable.from(file.buffer)
         .pipe(csv())
-        .on('data', (row) => {
-          players.push({
-            playerName: row.player_name,
-            riotId: row.riot_id,
-            region: row.region,
-            rank: row.rank,
-            mainAgent: row.main_agent,
-            headshotRate: Number(row.headshot_rate),
-            kdRatio: Number(row.kd_ratio),
-            matchesPlayed: Number(row.matches_played),
-          });
-        })
-        .on('end', async () => {
-          try {
-            await this.prisma.valorantPlayer.createMany({
-              data: players,
-              skipDuplicates: true,
-            });
-
-            resolve({
-              message: 'Import success',
-              count: players.length,
-            });
-          } catch (err) {
-            reject(err);
-          }
-        })
+        .on('data', (data) => rows.push(data))
+        .on('end', resolve)
         .on('error', reject);
-    });
+    })
+
+    for (const row of rows) {
+      let error: string | null = null
+
+      if (!row.riot_id) {
+        error = 'riot_id is required'
+      } else {
+        const exists = await this.prisma.valorantPlayer.findUnique({
+          where: { riotId: row.riot_id },
+        })
+        if (exists) error = 'riot_id already exists'
+      }
+
+      console.log(row)
+      await this.prisma.valorantPlayerImport.create({
+        data: {
+          playerName: row.player_name || null,
+          riotId: row.riot_id|| null,
+          region: row.region || null,
+          rank: row.rank || null,
+          mainAgent: row.main_agent || null,
+          headshotRate: row.headshot_rate
+            ? Number(row.headshot_rate)
+            : null,
+          kdRatio: row.kd_ratio ? Number(row.kd_ratio) : null,
+          matchesPlayed: row.matches_played
+            ? Number(row.matches_played)
+            : null,
+
+          isValid: !error,
+          errorMessage: error,
+        },
+      })
+    }
+
+    return { message: 'CSV imported to preview table' }
+}
+
+  //for check import preview
+  getImportPreview() {
+    return this.prisma.valorantPlayerImport.findMany({
+      orderBy: { createdAt: 'desc' },
+    })
+  }
+
+  async commitImport(ids: number[]) {
+    if (!ids || ids.length === 0) {
+      throw new BadRequestException('ids required')
+    }
+
+    const rows = await this.prisma.valorantPlayerImport.findMany({
+      where: {
+        id: { in: ids },
+        isValid: true,
+      },
+    })
+
+    await this.prisma.$transaction(async (tx) => {
+      for (const row of rows) {
+        await tx.valorantPlayer.create({
+          data: {
+            playerName: row.playerName!,
+            riotId: row.riotId!,
+            region: row.region!,
+            rank: row.rank!,
+            mainAgent: row.mainAgent!,
+            headshotRate: row.headshotRate!,
+            kdRatio: row.kdRatio!,
+            matchesPlayed: row.matchesPlayed!,
+          },
+        })
+      }
+
+      await tx.valorantPlayerImport.deleteMany({
+        where: { id: { in: ids } },
+      })
+    })
+
+    return {
+      message: `Imported ${rows.length} players`,
+    }
   }
 
   async test() {
